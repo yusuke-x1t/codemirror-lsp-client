@@ -1,3 +1,11 @@
+## 6.2.5 (2026-06-09)
+
+### Bug fixes
+
+Strip backslash escapes in snippets in places where CodeMirror doesn't support them.
+
+Support the `extraTextEdits` field in completions.
+
 ## 6.2.4 (2026-05-15)
 
 ### Bug fixes
