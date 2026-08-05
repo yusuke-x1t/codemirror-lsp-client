@@ -31,7 +31,12 @@ function getImplementation(plugin: LSPPlugin, pos: number) {
 }
 
 function jumpToOrigin(view: EditorView, type: {get: typeof getDefinition, capability: keyof lsp.ServerCapabilities}): boolean {
-  const plugin = LSPPlugin.get(view)
+  const feature = type.capability == "declarationProvider" ? "declaration"
+    : type.capability == "typeDefinitionProvider" ? "typeDefinition"
+    : type.capability == "implementationProvider" ? "implementation"
+    : "definition"
+  const plugin = LSPPlugin.getAll(view, feature)
+    .find(plugin => plugin.client.hasCapability(type.capability) !== false)
   if (!plugin || plugin.client.hasCapability(type.capability) === false) return false
   plugin.client.sync()
   plugin.client.withMapping(mapping => type.get(plugin, view.state.selection.main.head).then(response => {

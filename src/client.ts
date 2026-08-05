@@ -2,7 +2,7 @@ import type * as lsp from "vscode-languageserver-protocol"
 import {showDialog} from "@codemirror/view"
 import {ChangeSet, ChangeDesc, MapMode, Text, Extension} from "@codemirror/state"
 import {Language} from "@codemirror/language"
-import {LSPPlugin, lspPlugin} from "./plugin"
+import {LSPPlugin, LSPPluginOptions, lspPluginBinding} from "./plugin"
 import {toPosition, fromPosition} from "./pos"
 import {Workspace, WorkspaceFile, DefaultWorkspace} from "./workspace"
 import {lspTheme} from "./theme"
@@ -15,7 +15,7 @@ class Request<Result> {
   constructor(
     readonly id: number,
     readonly params: any,
-    readonly timeout: number
+    readonly timeout: ReturnType<typeof setTimeout>
   ) {
     this.promise = new Promise((resolve, reject) => {
       this.resolve = resolve
@@ -29,7 +29,7 @@ const clientCapabilities: lsp.ClientCapabilities = {
     markdown: {
       parser: "marked",
     },
-  },            
+  },
   textDocument: {
     completion: {
       completionItem: {
@@ -96,7 +96,7 @@ export class WorkspaceMapping {
   getMapping(uri: string) {
     let known = this.mappings.get(uri)
     if (!known) return null
-    let file = this.client.workspace.getFile(uri), view = file?.getView(), plugin = view && LSPPlugin.get(view)
+    let file = this.client.workspace.getFile(uri), view = file?.getView(), plugin = view && LSPPlugin.get(view, this.client)
     return plugin ? known.composeDesc(plugin.unsyncedChanges) : known
   }
 
@@ -320,9 +320,9 @@ export class LSPClient {
   /// derived from the editor's language configuration via
   /// [`Language.name`](#language.Language.name). You can pass in
   /// a specific ID as a third parameter.
-  plugin(fileURI: string, languageID?: string): Extension {
+  plugin(fileURI: string, languageID?: string, options?: LSPPluginOptions): Extension {
     return [
-      lspPlugin.of({client: this, uri: fileURI, languageID}),
+      lspPluginBinding({client: this, uri: fileURI, languageID, options}),
       lspTheme,
       this.extensions
     ]
@@ -387,7 +387,7 @@ export class LSPClient {
   /// The caller is responsible for
   /// [synchronizing](#lsp-client.LSPClient.sync) state before the
   /// request and correctly handling state drift caused by local
-  /// changes that happend during the request.
+  /// changes that happened during the request.
   request<Params, Result>(method: string, params: Params): Promise<Result> {
     if (!this.transport) return Promise.reject(new Error("Client not connected"))
     return this.initializing.then(() => this.requestInner<Params, Result>(method, params).promise)

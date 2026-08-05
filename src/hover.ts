@@ -10,11 +10,16 @@ import {LSPPlugin} from "./plugin"
 /// Create an extension that queries the language server for hover
 /// tooltips when the user hovers over the code with their pointer,
 /// and displays a tooltip when the server provides one.
+let defaultHoverTooltips: Extension | null = null
+
 export function hoverTooltips(config: {hoverTime?: number} = {}): Extension {
-  return hoverTooltip(lspTooltipSource, {
+  if (config.hoverTime == null && defaultHoverTooltips) return defaultHoverTooltips
+  const extension = hoverTooltip(lspTooltipSource, {
     hideOn: tr => tr.docChanged,
     hoverTime: config.hoverTime
   })
+  if (config.hoverTime == null) defaultHoverTooltips = extension
+  return extension
 }
 
 function hoverRequest(plugin: LSPPlugin, pos: number) {
@@ -27,17 +32,33 @@ function hoverRequest(plugin: LSPPlugin, pos: number) {
 }
 
 function lspTooltipSource(view: EditorView, pos: number): Promise<Tooltip | null> {
-  const plugin = LSPPlugin.get(view)
-  if (!plugin) return Promise.resolve(null)
-  return hoverRequest(plugin, pos).then(result => {
-    if (!result) return null
+  const plugins = LSPPlugin.getAll(view, "hover")
+    .filter(plugin => plugin.client.hasCapability("hoverProvider") !== false)
+  if (!plugins.length) return Promise.resolve(null)
+  return Promise.allSettled(plugins.map(plugin => hoverRequest(plugin, pos))).then(settled => {
+    const results: {plugin: LSPPlugin, result: lsp.Hover}[] = []
+    for (let i = 0; i < settled.length; i++) {
+      const item = settled[i]
+      if (item.status == "fulfilled" && item.value) results.push({plugin: plugins[i], result: item.value})
+      else if (item.status == "rejected") console.warn("[lsp] Hover provider failed", item.reason)
+    }
+    if (!results.length) return null
+    let from = pos, to = pos
+    for (const {result} of results) if (result.range) {
+      from = Math.min(from, fromPosition(view.state.doc, result.range.start))
+      to = Math.max(to, fromPosition(view.state.doc, result.range.end))
+    }
     return {
-      pos: result.range ? fromPosition(view.state.doc, result.range.start) : pos,
-      end: result.range ? fromPosition(view.state.doc, result.range.end) : pos,
+      pos: from,
+      end: to,
       create() {
         let elt = document.createElement("div")
         elt.className = "cm-lsp-hover-tooltip cm-lsp-documentation"
-        elt.innerHTML = renderTooltipContent(plugin, result.contents)
+        for (let i = 0; i < results.length; i++) {
+          if (i) elt.appendChild(document.createElement("hr"))
+          const section = elt.appendChild(document.createElement("div"))
+          section.innerHTML = renderTooltipContent(results[i].plugin, results[i].result.contents)
+        }
         return {dom: elt}
       },
       above: true
@@ -52,7 +73,7 @@ function renderTooltipContent(
   if (Array.isArray(value)) return value.map(m => renderCode(plugin, m)).join("<br>")
   if (typeof value == "string" || typeof value == "object" && "language" in value) return renderCode(plugin, value)
   return plugin.docToHTML(value)
-} 
+}
 
 function renderCode(plugin: LSPPlugin, code: lsp.MarkedString) {
   if (typeof code == "string") return plugin.docToHTML(code, "markdown")

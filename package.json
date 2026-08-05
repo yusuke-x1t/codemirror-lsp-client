@@ -1,13 +1,20 @@
 {
   "name": "@codemirror/lsp-client",
-  "version": "6.2.5",
-  "description": "Language server protocol client for CodeMirror",
+  "version": "6.2.5-acode.1",
+  "description": "Acode Foundation's multi-server language protocol client for CodeMirror",
   "keywords": [
     "codemirror",
     "lsp"
   ],
   "license": "MIT",
   "author": "Marijn Haverbeke <marijn@haverbeke.berlin>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Acode-Foundation/codemirror-lsp-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Acode-Foundation/codemirror-lsp-client/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

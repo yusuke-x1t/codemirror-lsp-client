@@ -3,6 +3,7 @@ import {StateField, StateEffect, Prec, Extension} from "@codemirror/state"
 import {EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding,
         Tooltip, showTooltip, Command} from "@codemirror/view"
 import {LSPPlugin} from "./plugin"
+import type {LSPClient} from "./client"
 
 function getSignatureHelp(plugin: LSPPlugin, pos: number, context: lsp.SignatureHelpContext) {
   if (plugin.client.hasCapability("signatureHelpProvider") === false) return Promise.resolve(null)
@@ -16,7 +17,7 @@ function getSignatureHelp(plugin: LSPPlugin, pos: number, context: lsp.Signature
 
 const signaturePlugin = ViewPlugin.fromClass(class {
   activeRequest: {pos: number, drop: boolean} | null = null
-  delayedRequest: number = 0
+  delayedRequest: ReturnType<typeof setTimeout> | null = null
 
   update(update: ViewUpdate) {
     if (this.activeRequest) {
@@ -28,7 +29,8 @@ const signaturePlugin = ViewPlugin.fromClass(class {
       }
     }
 
-    const plugin = LSPPlugin.get(update.view)
+    const plugin = LSPPlugin.getAll(update.view, "signatureHelp")
+      .find(plugin => plugin.client.hasCapability("signatureHelpProvider") !== false)
     if (!plugin) return
     const sigState = update.view.state.field(signatureState)
     let triggerCharacter = ""
@@ -53,7 +55,7 @@ const signaturePlugin = ViewPlugin.fromClass(class {
         activeSignatureHelp: sigState ? sigState.data : undefined
       })
     } else if (sigState && update.selectionSet) {
-      if (this.delayedRequest) clearTimeout(this.delayedRequest)
+      if (this.delayedRequest != null) clearTimeout(this.delayedRequest)
       this.delayedRequest = setTimeout(() => {
         this.startRequest(plugin, {
           triggerKind: 3 /* ContentChange */,
@@ -65,7 +67,7 @@ const signaturePlugin = ViewPlugin.fromClass(class {
   }
 
   startRequest(plugin: LSPPlugin, context: lsp.SignatureHelpContext) {
-    if (this.delayedRequest) clearTimeout(this.delayedRequest)
+    if (this.delayedRequest != null) clearTimeout(this.delayedRequest)
     let {view} = plugin, pos = view.state.selection.main.head
     if (this.activeRequest) this.activeRequest.drop = true
     let req = this.activeRequest = {pos, drop: false}
@@ -80,7 +82,8 @@ const signaturePlugin = ViewPlugin.fromClass(class {
         view.dispatch({effects: signatureEffect.of({
           data: result,
           active,
-          pos: same ? cur!.tooltip.pos : req.pos
+          pos: same ? cur!.tooltip.pos : req.pos,
+          client: plugin.client
         })})
       } else if (view.state.field(signatureState)) {
         view.dispatch({effects: signatureEffect.of(null)})
@@ -89,7 +92,7 @@ const signaturePlugin = ViewPlugin.fromClass(class {
   }
 
   destroy() {
-    if (this.delayedRequest) clearTimeout(this.delayedRequest)
+    if (this.delayedRequest != null) clearTimeout(this.delayedRequest)
     if (this.activeRequest) this.activeRequest.drop = true
   }
 })
@@ -108,7 +111,8 @@ class SignatureState {
   constructor(
     readonly data: lsp.SignatureHelp,
     readonly active: number,
-    readonly tooltip: Tooltip
+    readonly tooltip: Tooltip,
+    readonly client: LSPClient
   ) {}
 }
 
@@ -117,29 +121,36 @@ const signatureState = StateField.define<SignatureState | null>({
   update(sig, tr) {
     for (let e of tr.effects) if (e.is(signatureEffect)) {
       if (e.value) {
-        return new SignatureState(e.value.data, e.value.active, signatureTooltip(e.value.data, e.value.active, e.value.pos))
+        return new SignatureState(e.value.data, e.value.active,
+          signatureTooltip(e.value.data, e.value.active, e.value.pos, e.value.client), e.value.client)
       } else {
         return null
       }
     }
     if (sig && tr.docChanged)
-      return new SignatureState(sig.data, sig.active, {...sig.tooltip, pos: tr.changes.mapPos(sig.tooltip.pos)})
+      return new SignatureState(sig.data, sig.active,
+        {...sig.tooltip, pos: tr.changes.mapPos(sig.tooltip.pos)}, sig.client)
     return sig
   },
   provide: f => showTooltip.from(f, sig => sig && sig.tooltip)
 })
 
-const signatureEffect = StateEffect.define<{data: lsp.SignatureHelp, active: number, pos: number} | null>()
+const signatureEffect = StateEffect.define<{
+  data: lsp.SignatureHelp,
+  active: number,
+  pos: number,
+  client: LSPClient
+} | null>()
 
-function signatureTooltip(data: lsp.SignatureHelp, active: number, pos: number): Tooltip {
+function signatureTooltip(data: lsp.SignatureHelp, active: number, pos: number, client: LSPClient): Tooltip {
   return {
     pos,
     above: true,
-    create: view => drawSignatureTooltip(view, data, active)
+    create: view => drawSignatureTooltip(view, data, active, client)
   }
 }
 
-function drawSignatureTooltip(view: EditorView, data: lsp.SignatureHelp, active: number) {
+function drawSignatureTooltip(view: EditorView, data: lsp.SignatureHelp, active: number, client: LSPClient) {
   let dom = document.createElement("div")
   dom.className = "cm-lsp-signature-tooltip"
   if (data.signatures.length > 1) {
@@ -174,7 +185,7 @@ function drawSignatureTooltip(view: EditorView, data: lsp.SignatureHelp, active:
     sig.textContent = signature.label
   }
   if (signature.documentation) {
-    let plugin = LSPPlugin.get(view)
+    let plugin = LSPPlugin.get(view, client)
     if (plugin) {
       let docs = dom.appendChild(document.createElement("div"))
       docs.className = "cm-lsp-signature-documentation cm-lsp-documentation"
@@ -194,7 +205,8 @@ export const showSignatureHelp: Command = view => {
   }
   let field = view.state.field(signatureState)
   if (!plugin || field === undefined) return false
-  let lspPlugin = LSPPlugin.get(view)
+  let lspPlugin = LSPPlugin.getAll(view, "signatureHelp")
+    .find(plugin => plugin.client.hasCapability("signatureHelpProvider") !== false)
   if (!lspPlugin) return false
   plugin.startRequest(lspPlugin, {
     triggerKind: 1 /* Invoked */,
@@ -210,7 +222,9 @@ export const nextSignature: Command = view => {
   let field = view.state.field(signatureState)
   if (!field) return false
   if (field.active < field.data.signatures.length - 1)
-    view.dispatch({effects: signatureEffect.of({data: field.data, active: field.active + 1, pos: field.tooltip.pos})})
+    view.dispatch({effects: signatureEffect.of({
+      data: field.data, active: field.active + 1, pos: field.tooltip.pos, client: field.client
+    })})
   return true
 }
 
@@ -220,7 +234,9 @@ export const prevSignature: Command = view => {
   let field = view.state.field(signatureState)
   if (!field) return false
   if (field.active > 0)
-    view.dispatch({effects: signatureEffect.of({data: field.data, active: field.active - 1, pos: field.tooltip.pos})})
+    view.dispatch({effects: signatureEffect.of({
+      data: field.data, active: field.active - 1, pos: field.tooltip.pos, client: field.client
+    })})
   return true
 }
 
@@ -247,10 +263,12 @@ export const signatureKeymap: readonly KeyBinding[] = [
 /// Returns an extension that enables signature help. Will bind the
 /// keys in [`signatureKeymap`](#lsp-client.signatureKeymap) unless
 /// `keymap` is set to `false`.
+const signatureHelpWithoutKeymap: Extension = [signatureState, signaturePlugin]
+const signatureHelpWithKeymap: Extension = [
+  signatureHelpWithoutKeymap,
+  Prec.high(keymap.of(signatureKeymap))
+]
+
 export function signatureHelp(config: {keymap?: boolean} = {}): Extension {
-  return [
-    signatureState,
-    signaturePlugin,
-    config.keymap === false ? [] : Prec.high(keymap.of(signatureKeymap))
-  ]
+  return config.keymap === false ? signatureHelpWithoutKeymap : signatureHelpWithKeymap
 }

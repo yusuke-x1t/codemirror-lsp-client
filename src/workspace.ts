@@ -130,7 +130,7 @@ export class DefaultWorkspace extends Workspace {
   syncFiles() {
     let result: WorkspaceFileUpdate[] = []
     for (let file of this.files) {
-      let plugin = LSPPlugin.get(file.view)
+      let plugin = LSPPlugin.get(file.view, this.client)
       if (!plugin) continue
       let changes = plugin.unsyncedChanges
       if (!changes.empty) {
@@ -146,7 +146,7 @@ export class DefaultWorkspace extends Workspace {
   openFile(uri: string, languageId: string, view: EditorView) {
     if (this.getFile(uri))
       throw new Error("Default workspace implementation doesn't support multiple views on the same file")
-    let file = new DefaultWorkspaceFile(uri, languageId, this.nextFileVersion(uri), view.state.doc, view) 
+    let file = new DefaultWorkspaceFile(uri, languageId, this.nextFileVersion(uri), view.state.doc, view)
     this.files.push(file)
     this.client.didOpen(file)
   }

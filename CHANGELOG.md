@@ -1,3 +1,11 @@
+## 6.2.5-acode.1 (2026-08-04)
+
+### New features
+
+Allow multiple LSP clients to bind to one editor, with per-client feature
+selection, priority routing, independent document synchronization, and merged
+completion and hover providers.
+
 ## 6.2.5 (2026-06-09)
 
 ### Bug fixes

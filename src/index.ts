@@ -1,6 +1,9 @@
-export {Transport, LSPClient, LSPClientConfig, LSPClientExtension, WorkspaceMapping} from "./client"
+export {LSPClient, WorkspaceMapping} from "./client"
+export type {Transport, LSPClientConfig, LSPClientExtension} from "./client"
 export {LSPPlugin} from "./plugin"
-export {Workspace, WorkspaceFile} from "./workspace"
+export type {LSPFeature, LSPPluginOptions} from "./plugin"
+export {Workspace} from "./workspace"
+export type {WorkspaceFile} from "./workspace"
 export {serverCompletion, serverCompletionSource} from "./completion"
 export {hoverTooltips} from "./hover"
 export {formatDocument, formatKeymap} from "./formatting"
@@ -10,9 +13,10 @@ export {jumpToDefinition, jumpToDeclaration, jumpToTypeDefinition, jumpToImpleme
 export {findReferences, closeReferencePanel, findReferencesKeymap} from "./references"
 export {serverDiagnostics} from "./diagnostics"
 
-import {Extension} from "@codemirror/state"
+import type {Extension} from "@codemirror/state"
 import {keymap} from "@codemirror/view"
-import {LSPClient, LSPClientExtension} from "./client"
+import {LSPClient} from "./client"
+import type {LSPClientExtension} from "./client"
 import {LSPPlugin} from "./plugin"
 import {serverCompletion} from "./completion"
 import {hoverTooltips} from "./hover"
@@ -22,6 +26,13 @@ import {signatureHelp} from "./signature"
 import {jumpToDefinitionKeymap} from "./definition"
 import {findReferencesKeymap} from "./references"
 import {serverDiagnostics} from "./diagnostics"
+
+const languageServerKeymap = keymap.of([
+  ...formatKeymap,
+  ...renameKeymap,
+  ...jumpToDefinitionKeymap,
+  ...findReferencesKeymap
+])
 
 /// Returns an extension that enables the [LSP
 /// plugin](#lsp-client.LSPPlugin) as well as LSP based
@@ -38,7 +49,7 @@ export function languageServerSupport(client: LSPClient, uri: string, languageID
     LSPPlugin.create(client, uri, languageID),
     serverCompletion(),
     hoverTooltips(),
-    keymap.of([...formatKeymap, ...renameKeymap, ...jumpToDefinitionKeymap, ...findReferencesKeymap]),
+    languageServerKeymap,
     signatureHelp(),
   ]
 }
@@ -51,7 +62,7 @@ export function languageServerExtensions(): readonly (Extension | LSPClientExten
   return [
     serverCompletion(),
     hoverTooltips(),
-    keymap.of([...formatKeymap, ...renameKeymap, ...jumpToDefinitionKeymap, ...findReferencesKeymap]),
+    languageServerKeymap,
     signatureHelp(),
     serverDiagnostics()
   ]

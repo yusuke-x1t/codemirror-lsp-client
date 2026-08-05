@@ -31,6 +31,35 @@ Responsibility for how to actually talk to the server, how to connect
 and to handle disconnects are left to the code that implements the
 transport.
 
+## Multiple servers per editor (Acode fork)
+
+This Acode Foundation fork allows several independent clients to attach to the
+same `EditorView`. For example, TypeScript can be the primary provider while
+Tailwind CSS contributes completions, hover information, and diagnostics.
+
+```javascript
+new EditorView({
+  extensions: [
+    typescriptClient.plugin(uri, "typescriptreact", {priority: 100}),
+    tailwindClient.plugin(uri, "typescriptreact", {
+      priority: 50,
+      features: {formatting: false, rename: false}
+    })
+  ]
+})
+```
+
+Bindings are ordered by descending `priority`. Completion and hover results
+are combined across eligible providers. Features that need one owner, such as
+formatting, rename, navigation, and signature help, use the first capable
+eligible binding. A feature is enabled unless its binding sets that feature to
+`false`.
+
+Document edits are recorded once per editor. Each client keeps an independent
+sync revision, and its pending `ChangeSet` is composed lazily only when that
+client synchronizes. Thus, attaching idle supplemental clients does not add a
+per-client loop to the typing path.
+
 This example uses a crude transport that doesn't handle errors at all.
 
 

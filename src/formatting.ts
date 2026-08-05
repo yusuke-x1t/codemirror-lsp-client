@@ -14,7 +14,8 @@ function getFormatting(plugin: LSPPlugin, options: lsp.FormattingOptions) {
 /// This command asks the language server to reformat the document,
 /// and then applies the changes it returns.
 export const formatDocument: Command = view => {
-  const plugin = LSPPlugin.get(view)
+  const plugin = LSPPlugin.getAll(view, "formatting")
+    .find(plugin => plugin.client.hasCapability("documentFormattingProvider") !== false)
   if (!plugin) return false
   plugin.client.sync()
   plugin.client.withMapping(mapping => getFormatting(plugin, {

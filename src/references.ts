@@ -4,6 +4,7 @@ import {StateField, StateEffect} from "@codemirror/state"
 import {LSPPlugin} from "./plugin"
 import {WorkspaceFile} from "./workspace"
 import {WorkspaceMapping} from "./client"
+import type {LSPClient} from "./client"
 
 function getReferences(plugin: LSPPlugin, pos: number) {
   return plugin.client.request<lsp.ReferenceParams, lsp.Location[] | null>("textDocument/references", {
@@ -19,7 +20,8 @@ type ReferenceLocation = {file: WorkspaceFile, range: lsp.Range}
 /// cursor. When the server can provide such references, show them as
 /// a list in a panel.
 export const findReferences: Command = view => {
-  const plugin = LSPPlugin.get(view)
+  const plugin = LSPPlugin.getAll(view, "references")
+    .find(plugin => plugin.client.hasCapability("referencesProvider") !== false)
   if (!plugin || plugin.client.hasCapability("referencesProvider") === false) return false
   plugin.client.sync()
   let mapping = plugin.client.workspaceMapping(), passedMapping = false
@@ -30,7 +32,7 @@ export const findReferences: Command = view => {
     }))).then(resolved => {
       let locs = resolved.filter(l => l) as ReferenceLocation[]
       if (locs.length) {
-        displayReferences(plugin.view, locs, mapping)
+        displayReferences(plugin.view, locs, mapping, plugin.client)
         passedMapping = true
       }
     })
@@ -60,15 +62,15 @@ const referencePanel = StateField.define<PanelConstructor | null>({
 
 const setReferencePanel = StateEffect.define<PanelConstructor | null>()
 
-function displayReferences(view: EditorView, locs: readonly ReferenceLocation[], mapping: WorkspaceMapping) {
-  let panel = createReferencePanel(locs, mapping)
+function displayReferences(view: EditorView, locs: readonly ReferenceLocation[], mapping: WorkspaceMapping, client: LSPClient) {
+  let panel = createReferencePanel(locs, mapping, client)
   let effect = view.state.field(referencePanel, false) === undefined
     ? StateEffect.appendConfig.of(referencePanel.init(() => panel))
     : setReferencePanel.of(panel)
   view.dispatch({effects: effect})
 }
 
-function createReferencePanel(locs: readonly ReferenceLocation[], mapping: WorkspaceMapping): PanelConstructor {
+function createReferencePanel(locs: readonly ReferenceLocation[], mapping: WorkspaceMapping, client: LSPClient): PanelConstructor {
   let created = false
   // Make sure that if this panel isn't used, the mapping still gets destroyed
   setTimeout(() => {if (!created) mapping.destroy()}, 500)
@@ -121,7 +123,7 @@ function createReferencePanel(locs: readonly ReferenceLocation[], mapping: Works
     }
     function showReference(index: number) {
       let {file, range} = locs[index]
-      let plugin = LSPPlugin.get(view)
+      let plugin = LSPPlugin.get(view, client)
       if (!plugin) return
       Promise.resolve(file.uri == plugin.uri ? view : plugin.client.workspace.displayFile(file.uri)).then(view => {
         if (!view) return
@@ -169,7 +171,7 @@ function createReferencePanel(locs: readonly ReferenceLocation[], mapping: Works
     close.textContent = "×"
     close.addEventListener("click", () => closeReferencePanel(view))
     close.setAttribute("aria-label", view.state.phrase("close"))
-    
+
     return {
       dom,
       destroy: () => mapping.destroy(),

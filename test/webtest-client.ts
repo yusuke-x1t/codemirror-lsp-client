@@ -176,6 +176,36 @@ describe("LSPClient", () => {
   })
 
   describe("LSPPlugin", () => {
+    it("can attach multiple clients with independent synchronization", async () => {
+      let first = setup(), second = setup()
+      let cm = new EditorView({
+        doc: "one",
+        extensions: [
+          second.client.plugin(URI, "javascript", {
+            priority: 10,
+            features: {formatting: false}
+          }),
+          first.client.plugin(URI, "javascript", {priority: 100})
+        ]
+      })
+      await Promise.all([first.client.initializing, second.client.initializing])
+      await wait()
+      ist(LSPPlugin.getAll(cm).length, 2)
+      ist(LSPPlugin.get(cm)!.client, first.client)
+      ist(LSPPlugin.getAll(cm, "formatting").length, 1)
+
+      cm.dispatch({changes: {from: 3, insert: "!"}})
+      first.client.sync()
+      await wait()
+      ist(first.server.getFile(URI)!.text, "one!")
+      ist(second.server.getFile(URI)!.text, "one")
+
+      second.client.sync()
+      await wait()
+      ist(second.server.getFile(URI)!.text, "one!")
+      cm.destroy()
+    })
+
     it("can render doc strings", () => {
       let {client} = setup({client: {sanitizeHTML: s => s.replace(/x/g, "y")}})
       let cm = ed(client, {})

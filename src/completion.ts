@@ -16,6 +16,8 @@ function lspToSnippet(text: string): string {
 /// Register the [language server completion
 /// source](#lsp-client.serverCompletionSource) as an autocompletion
 /// source.
+let defaultServerCompletion: Extension | null = null
+
 export function serverCompletion(config: {
   /// By default, the completion source that asks the language server
   /// for completions is added as a regular source, in addition to any
@@ -29,6 +31,8 @@ export function serverCompletion(config: {
   /// any non-word prefixes found in the results.
   validFor?: RegExp
 } = {}): Extension {
+  if (!config.override && !config.validFor && defaultServerCompletion)
+    return defaultServerCompletion
   let result: Extension[]
   if (config.override) {
     result = [autocompletion({override: [serverCompletionSource]})]
@@ -37,6 +41,7 @@ export function serverCompletion(config: {
     result = [autocompletion(), EditorState.languageData.of(() => data)]
   }
   if (config.validFor) result.push(completionConfig.of({validFor: config.validFor}))
+  if (!config.override && !config.validFor) defaultServerCompletion = result
   return result
 }
 
@@ -114,11 +119,7 @@ function applyEdits(edits: readonly TextEdit[], text: string, mapped: ChangeDesc
   }
 }
 
-/// A completion source that requests completions from a language
-/// server.
-export const serverCompletionSource: CompletionSource = context => {
-  const plugin = context.view && LSPPlugin.get(context.view)
-  if (!plugin) return null
+function completionForPlugin(plugin: LSPPlugin, context: CompletionContext): Promise<CompletionResult | null> | null {
   let triggerChar = context.state.sliceDoc(context.pos - 1, context.pos)
   let triggerReason = context.explicit ? "invoked" : shouldTriggerCompletion(plugin, triggerChar)
   if (!triggerReason) return null
@@ -172,6 +173,76 @@ export const serverCompletionSource: CompletionSource = context => {
     if ("code" in err && (err as lsp.ResponseError).code == -32800 /* RequestCancelled */)
       return null
     throw err
+  })
+}
+
+function mappedOptionRange(option: Completion, source: CompletionResult, from: number, to: number): Completion {
+  const sourceFrom = source.from, sourceTo = source.to ?? sourceFrom
+  if (sourceFrom == from && sourceTo == to) return option
+  const apply = option.apply ?? option.label
+  return {
+    ...option,
+    apply(view, completion) {
+      if (typeof apply == "function") apply(view, completion, sourceFrom, sourceTo)
+      else view.dispatch(insertCompletionText(view.state, apply, sourceFrom, sourceTo))
+    }
+  }
+}
+
+function mergeCompletionResults(results: readonly CompletionResult[]): CompletionResult | null {
+  if (!results.length) return null
+  if (results.length == 1) return results[0]
+
+  let from = results[0].from, to = results[0].to ?? results[0].from
+  for (let i = 1; i < results.length; i++) {
+    from = Math.min(from, results[i].from)
+    to = Math.max(to, results[i].to ?? results[i].from)
+  }
+
+  const options: Completion[] = [], seen = new Set<string>()
+  for (const result of results) {
+    for (const raw of result.options) {
+      const option = result.commitCharacters && !raw.commitCharacters
+        ? {...raw, commitCharacters: result.commitCharacters}
+        : raw
+      // Providers often return identical keyword entries. Keep the first one,
+      // which follows binding priority, while preserving distinct details.
+      const key = `${option.label}\u0000${option.detail || ""}\u0000${option.type || ""}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      options.push(mappedOptionRange(option, result, from, to))
+    }
+  }
+
+  const firstValidFor = results[0].validFor
+  const validFor = results.every(result => String(result.validFor) == String(firstValidFor))
+    ? firstValidFor
+    : undefined
+  return {from, to, options, validFor}
+}
+
+/// A completion source that requests completions from every eligible language
+/// server attached to the editor and combines their results. Requests are
+/// independent so one failing supplemental server cannot suppress the others.
+export const serverCompletionSource: CompletionSource = context => {
+  if (!context.view) return null
+  const plugins = LSPPlugin.getAll(context.view, "completion")
+    .filter(plugin => plugin.client.hasCapability("completionProvider") !== false)
+  if (!plugins.length) return null
+  const requests = plugins.map(plugin => completionForPlugin(plugin, context))
+    .filter((request): request is Promise<CompletionResult | null> => !!request)
+  if (!requests.length) return null
+  if (requests.length == 1) return requests[0]
+  return Promise.allSettled(requests).then(settled => {
+    const results: CompletionResult[] = []
+    for (const item of settled) {
+      if (item.status == "fulfilled") {
+        if (item.value) results.push(item.value)
+      } else if (!context.aborted) {
+        console.warn("[lsp] Completion provider failed", item.reason)
+      }
+    }
+    return mergeCompletionResults(results)
   })
 }
 
